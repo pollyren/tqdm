@@ -75,6 +75,7 @@ typedef struct {
     uint64_t current_steps;
     /// description string
     const char *description;
+    /// internal string to append after description ("" if no description)
     const char *_after_description;
     /// minimum interval between updates (in milliseconds)
     uint32_t min_interval_ms;
@@ -181,7 +182,7 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     _tqdm_format_time(remaining, remaining_str, sizeof(remaining_str));
     snprintf(steps_per_ms_str, sizeof(steps_per_ms_str), "%.2f", steps_per_ms);
 
-    char *orient = t->_drawn ? "\r\033[K" : "";
+    const char *orient = t->_drawn ? "\r\033[K" : "";
 
     char before_bar_line[512];
     int before_bar_length = snprintf(
