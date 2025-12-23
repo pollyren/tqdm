@@ -25,7 +25,6 @@ int main() {
         usleep(1); // simulate work
         tqdm_update(&bar, 1);
     }
-    tqdm_finish(&bar);
 }
 ```
 
