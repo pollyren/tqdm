@@ -41,7 +41,17 @@ extern "C" {
 #include <string.h>
 #include <stdbool.h>
 
-#define TQDM_MINIMUM_BAR_WIDTH 10
+/**
+ * @brief Whether to dynamically resize the progress bar based on terminal width
+ * Set to true to enable dynamic resizing with changing terminal sizes (default),
+ * false to use a fixed width determined at initialisation.
+ */
+#define TQDM_DYNAMIC_RESIZE true
+
+#define TQDM_DEFAULT_TERMINAL_WIDTH 80
+#define TQDM_MINIMUM_TERMINAL_WIDTH 10
+#define TQDM_MAXIMUM_TERMINAL_WIDTH 1024
+#define TQDM_MINIMUM_BAR_WIDTH 1
 
 static const char *TQDM_BLOCKS[] = {
     " ",                // ' '
@@ -55,11 +65,12 @@ static const char *TQDM_BLOCKS[] = {
     "\xE2\x96\x88"      // '█'
 };
 
-#define TQDM_FULL_BLOCK TQDM_BLOCKS[8]
-#define TQDM_EMPTY_BLOCK ' '
+#define TQDM_EMPTY_IDX  0
+#define TQDM_FULL_IDX   8
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define CLAMP(x, low, high) (MIN(MAX((x), (low)), (high)))
 
 /**
  * @brief Struct representing a tqdm progress bar
@@ -75,12 +86,12 @@ typedef struct {
     uint64_t current_steps;
     /// description string
     const char *description;
-    /// internal string to append after description ("" if no description)
-    const char *_after_description;
     /// minimum interval between updates (in milliseconds)
     uint32_t min_interval_ms;
 
     /* for internal bookkeeping */
+    /// internal string to append after description ("" if no description)
+    const char *_after_description;
     /// time in ms when the progress bar was started, based on CLOCK_MONOTONIC
     long _start;
     /// time in ms when the progress bar was last printed, based on CLOCK_MONOTONIC
@@ -89,6 +100,8 @@ typedef struct {
     bool _drawn;
     /// file descriptor to write to (STDERR_FILENO by default)
     int _fd;
+    /// terminal width
+    unsigned int _term_width;
 } tqdm;
 
 static long _tqdm_timespec_to_ms(struct timespec *ts) {
@@ -102,13 +115,15 @@ static long _tqdm_now_ms() {
     return _tqdm_timespec_to_ms(&ts);
 }
 
-/// helper to get terminal width, defaults to 80 if unavailable
-static int _tqdm_terminal_size(tqdm *t) {
+/// helper to get terminal width, defaults to TQDM_DEFAULT_TERMINAL_WIDTH if unavailable
+static unsigned int _tqdm_terminal_size(tqdm *t) {
     struct winsize w;
     if (ioctl(t->_fd, TIOCGWINSZ, &w) == -1) {
-        return 80;
+        return TQDM_DEFAULT_TERMINAL_WIDTH;
     }
-    return w.ws_col ? w.ws_col : 80;
+    return w.ws_col
+            ? CLAMP(w.ws_col, TQDM_MINIMUM_TERMINAL_WIDTH, TQDM_MAXIMUM_TERMINAL_WIDTH)
+            : TQDM_DEFAULT_TERMINAL_WIDTH;
 }
 
 /// helper to format time and write into buffer of size n
@@ -147,6 +162,7 @@ static void tqdm_init(tqdm *t, uint64_t total_steps, const char *description, ui
     t->_last_print = t->_start;
     t->_drawn = false;
     t->_fd = STDERR_FILENO;
+    t->_term_width = _tqdm_terminal_size(t);
 }
 
 /**
@@ -169,7 +185,7 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     double elapsed = now_ms - t->_start;
     double steps_per_ms = t->current_steps / (elapsed + 1e-9);
     double percent_complete = (double)t->current_steps / t->total_steps;
-    int width = _tqdm_terminal_size(t);
+    unsigned int width = TQDM_DYNAMIC_RESIZE ? _tqdm_terminal_size(t) : t->_term_width;
 
     // compute an estimate of the remaining time based on current steps per ms
     double remaining = (steps_per_ms > 0 && t->current_steps < t->total_steps)
@@ -182,20 +198,25 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     _tqdm_format_time(remaining, remaining_str, sizeof(remaining_str));
     snprintf(steps_per_ms_str, sizeof(steps_per_ms_str), "%.2f", steps_per_ms);
 
-    const char *orient = t->_drawn ? "\r\033[K" : "";
+    // build the bar using utf-8 block characters
+    char bar[1024];
+    int bar_pos = 0;
 
-    char before_bar_line[512];
+    const char *orient = t->_drawn ? "\r\033[K" : "";
+    bar_pos = snprintf(bar, sizeof(bar), "%s", orient);
+
     int before_bar_length = snprintf(
-        before_bar_line, sizeof(before_bar_line),
+        bar + bar_pos, sizeof(bar) - bar_pos,
         "%s%s%3.0f%% |",
         t->description,
         t->_after_description,
         percent_complete * 100
     );
+    bar_pos += before_bar_length;
 
-    char after_bar_line[512];
+    char after_bar[128];
     int after_bar_length = snprintf(
-        after_bar_line, sizeof(after_bar_line),
+        after_bar, sizeof(after_bar),
         "| %llu/%llu [%s<%s, %sit/s]",
         t->current_steps, t->total_steps,
         elapsed_str,
@@ -205,10 +226,7 @@ static void tqdm_update(tqdm *t, uint64_t step) {
 
     // compute length of non-bar elements, accounting for nonprintable characters
     unsigned int nonbar_width = before_bar_length + after_bar_length;
-    unsigned int bar_width = width - nonbar_width;
-
-    // build the bar using utf-8 block characters
-    char bar[bar_width * 3 + 1]; // each block can be up to 3 bytes, plus NUL
+    unsigned int bar_width = MAX((int)(width - nonbar_width), TQDM_MINIMUM_BAR_WIDTH);
 
     // compute the number of full and partial blocks to display
     double filled_cells = percent_complete * bar_width;
@@ -216,32 +234,25 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     double fractional_cell = filled_cells - full_cells;
 
     // fill in the bar string
-    int bar_pos = 0;
     for (int i = 0; i < bar_width; i++) {
+        ssize_t idx = TQDM_EMPTY_IDX;
         if (i < full_cells) {
-            const char *block = TQDM_FULL_BLOCK;
-            while (*block && bar_pos < (int)sizeof(bar) - 1) {
-                bar[bar_pos++] = *block++;
-            }
-        } else if (i == full_cells && full_cells < bar_width) {
+            idx = TQDM_FULL_IDX;
+        } else if (i == full_cells) {
             // if last partial block, determine which block to use
-            int block_idx = MIN(MAX(fractional_cell * 8, 0), 8);
-            const char *block = TQDM_BLOCKS[block_idx];
-            while (*block && bar_pos < (int)sizeof(bar) - 1) {
-                bar[bar_pos++] = *block++;
-            }
-        } else {
-            bar[bar_pos++] = TQDM_EMPTY_BLOCK;
+            idx = (ssize_t)(fractional_cell * 8);
         }
+
+        const char *block = TQDM_BLOCKS[idx];
+        memcpy(bar + bar_pos, block, strlen(block));
+        bar_pos += strlen(block);
     }
 
     bar[bar_pos] = 0;
 
     // finally, construct the complete line and write to stderr
-    char line[1024];
-    int written = snprintf(
-        line, sizeof(line), "%s%s%s%s", orient, before_bar_line, bar, after_bar_line
-    );
+    char line[TQDM_MAXIMUM_TERMINAL_WIDTH];
+    int written = snprintf(line, sizeof(line), "%s%s", bar, after_bar);
 
     if (written >= 0) {
         write(t->_fd, line, written);
