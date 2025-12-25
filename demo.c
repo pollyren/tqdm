@@ -36,11 +36,25 @@ void demo4() {
     }
 }
 
+// demo5: incrementing every 500 steps
+void demo5() {
+    tqdm bar;
+    tqdm_init(&bar, 1e5, "Batch processing", 50);
+    for (int i = 0; i < 1e5; i++) {
+        usleep(100);
+
+        if (i % 500 == 0) {
+            tqdm_update(&bar, 500); // increment by 500 steps
+        }
+    }
+}
+
 int main() {
     demo1();
     demo2();
-    // demo3();
+    demo3();
     demo4();
+    demo5();
 
     return 0;
 }

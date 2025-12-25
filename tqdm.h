@@ -99,6 +99,8 @@ typedef struct {
     long _last_print;
     /// internal boolean to track if the bar has been drawn, for \r handling
     bool _drawn;
+    /// internal boolean to track if the bar is done
+    bool _done;
     /// file descriptor to write to (STDERR_FILENO by default)
     int _fd;
     /// terminal width
@@ -172,7 +174,7 @@ static void _tqdm_format_time(double milliseconds, char *buffer, size_t n) {
 static void tqdm_init(tqdm *t, uint64_t total_steps, const char *description, uint32_t min_interval_ms) {
     t->total_steps = total_steps;
     t->current_steps = 0;
-    t->description = description;
+    t->description = description ? description : "";
     if (description && strlen(description) > 0) {
         t->_after_description = ": ";
     } else {
@@ -182,6 +184,7 @@ static void tqdm_init(tqdm *t, uint64_t total_steps, const char *description, ui
     t->_start = _tqdm_now_ms();
     t->_last_print = t->_start;
     t->_drawn = false;
+    t->_done = false;
     t->_fd = STDERR_FILENO;
     t->_term_width = _tqdm_terminal_size(t);
 
@@ -202,6 +205,11 @@ static void tqdm_update(tqdm *t, uint64_t step) {
 
     t->current_steps += step;
 
+    // if progress bar is done, do nothing
+    if (t->_done) {
+        return;
+    }
+
     bool force_redraw = false;
 
 #if TQDM_DYNAMIC_RESIZE
@@ -211,7 +219,7 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     }
 #endif // TQDM_DYNAMIC_RESIZE
 
-    // if minimum interval not reached and not finished yet, skip update
+    // if minimum interval not reached, skip update
     if (t->_drawn &&        // only skip if already drawn
         !force_redraw &&    // but don't skip if terminal resized in dynamic mode
         now_ms - last_ms < t->min_interval_ms &&
@@ -300,6 +308,10 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     // update last print time to now
     t->_last_print = now_ms;
     t->_drawn = true;
+    if (t->current_steps >= t->total_steps) {
+        t->_done = true;
+        write(t->_fd, "\n", 1);
+    }
 }
 
 /* ==================== convenience macros ==================== */
