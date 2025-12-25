@@ -26,10 +26,21 @@ void demo3() {
     TQDM_FOR_END;
 }
 
+// demo4: long minimum interval with dynamic resizing
+void demo4() {
+    tqdm bar;
+    tqdm_init(&bar, 1e6, "An extremely long interval", 20000); // 20 seconds interval
+    for (int i = 0; i < 1e6; i++) {
+        usleep(100); // simulate work
+        tqdm_update(&bar, 1);
+    }
+}
+
 int main() {
     demo1();
     demo2();
-    demo3();
+    // demo3();
+    demo4();
 
     return 0;
 }

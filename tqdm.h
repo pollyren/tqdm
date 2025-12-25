@@ -40,13 +40,14 @@ extern "C" {
 #include <math.h>
 #include <string.h>
 #include <stdbool.h>
+#include <signal.h>
 
 /**
- * @brief Whether to dynamically resize the progress bar based on terminal width
- * Set to true to enable dynamic resizing with changing terminal sizes (default),
- * false to use a fixed width determined at initialisation.
+ * @brief Feature toggle for dynamically resizing the progress bar based on terminal width.
+ * Set to 1 to enable dynamic resizing with changing terminal sizes (default),
+ * 0 to use a fixed width determined at initialisation.
  */
-#define TQDM_DYNAMIC_RESIZE true
+#define TQDM_DYNAMIC_RESIZE 1
 
 #define TQDM_DEFAULT_TERMINAL_WIDTH 80
 #define TQDM_MINIMUM_TERMINAL_WIDTH 10
@@ -103,6 +104,26 @@ typedef struct {
     /// terminal width
     unsigned int _term_width;
 } tqdm;
+
+#if TQDM_DYNAMIC_RESIZE
+/// flag set when a SIGWINCH is received
+static volatile sig_atomic_t _tqdm_winch = 0;
+
+/// signal handler for SIGWINCH to set _tqdm_winch flag
+static void _tqdm_handle_sigwinch(int signo) {
+    (void)signo;
+    _tqdm_winch = 1;
+}
+
+/// helper function to install the SIGWINCH handler, once program-wide
+static void _tqdm_install_sigwinch(void) {
+    static int installed = 0;
+    if (!installed) {
+        signal(SIGWINCH, _tqdm_handle_sigwinch);
+        installed = 1;
+    }
+}
+#endif // TQDM_DYNAMIC_RESIZE
 
 static long _tqdm_timespec_to_ms(struct timespec *ts) {
     return ts->tv_sec * 1e3 + ts->tv_nsec / 1e6;
@@ -163,6 +184,10 @@ static void tqdm_init(tqdm *t, uint64_t total_steps, const char *description, ui
     t->_drawn = false;
     t->_fd = STDERR_FILENO;
     t->_term_width = _tqdm_terminal_size(t);
+
+#if TQDM_DYNAMIC_RESIZE
+    _tqdm_install_sigwinch();
+#endif // TQDM_DYNAMIC_RESIZE
 }
 
 /**
@@ -177,8 +202,20 @@ static void tqdm_update(tqdm *t, uint64_t step) {
 
     t->current_steps += step;
 
+    bool force_redraw = false;
+
+#if TQDM_DYNAMIC_RESIZE
+    if (TQDM_DYNAMIC_RESIZE && _tqdm_winch) {
+        _tqdm_winch = 0; // reset flag
+        force_redraw = true;
+    }
+#endif // TQDM_DYNAMIC_RESIZE
+
     // if minimum interval not reached and not finished yet, skip update
-    if (now_ms - last_ms < t->min_interval_ms && t->current_steps < t->total_steps) {
+    if (t->_drawn &&        // only skip if already drawn
+        !force_redraw &&    // but don't skip if terminal resized in dynamic mode
+        now_ms - last_ms < t->min_interval_ms &&
+        t->current_steps < t->total_steps) {
         return;
     }
 
