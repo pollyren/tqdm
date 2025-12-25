@@ -47,7 +47,9 @@ extern "C" {
  * Set to 1 to enable dynamic resizing with changing terminal sizes (default),
  * 0 to use a fixed width determined at initialisation.
  */
+#ifndef TQDM_DYNAMIC_RESIZE
 #define TQDM_DYNAMIC_RESIZE 1
+#endif
 
 #define TQDM_DEFAULT_TERMINAL_WIDTH 80
 #define TQDM_MINIMUM_TERMINAL_WIDTH 10
