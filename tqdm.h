@@ -230,20 +230,19 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     }
 
     double elapsed = now_ms - t->_start;
-    double steps_per_ms = t->current_steps / (elapsed + 1e-9);
+    double iter_per_ms = t->current_steps / (elapsed + 1e-9);
     double percent_complete = (double)t->current_steps / t->total_steps;
     unsigned int width = TQDM_DYNAMIC_RESIZE ? _tqdm_terminal_size(t) : t->_term_width;
 
     // compute an estimate of the remaining time based on current steps per ms
-    double remaining = (steps_per_ms > 0 && t->current_steps < t->total_steps)
-                        ? (t->total_steps - t->current_steps) / steps_per_ms
+    double remaining = (iter_per_ms > 0 && t->current_steps < t->total_steps)
+                        ? (t->total_steps - t->current_steps) / iter_per_ms
                         : 0;
 
-    // format elapsed and remaining time strings, steps per second
-    char elapsed_str[32], remaining_str[32], steps_per_ms_str[32];
+    // format elapsed and remaining time strings
+    char elapsed_str[32], remaining_str[32];
     _tqdm_format_time(elapsed, elapsed_str, sizeof(elapsed_str));
     _tqdm_format_time(remaining, remaining_str, sizeof(remaining_str));
-    snprintf(steps_per_ms_str, sizeof(steps_per_ms_str), "%.2f", steps_per_ms);
 
     // build the bar using utf-8 block characters
     char bar[1024];
@@ -264,11 +263,11 @@ static void tqdm_update(tqdm *t, uint64_t step) {
     char after_bar[128];
     int after_bar_length = snprintf(
         after_bar, sizeof(after_bar),
-        "| %llu/%llu [%s<%s, %sit/s]",
+        "| %llu/%llu [%s<%s, %.2fit/s]",
         t->current_steps, t->total_steps,
         elapsed_str,
         remaining_str,
-        steps_per_ms_str
+        iter_per_ms * 1000.0 // convert to steps/s
     );
 
     // compute length of non-bar elements, accounting for nonprintable characters
