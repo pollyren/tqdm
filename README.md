@@ -21,18 +21,16 @@ To use `tqdm`, simply include the `tqdm.h` header in your C/C++ project. The fol
 
 int main() {
     tqdm bar;
-    tqdm_init(&bar, 6e7, "Making progress on a very important task", 50);
-    for (int i = 0; i < 6e7; ++i) {
+    tqdm_init(&bar, 1234567, "Making progress on a very important task", 50);
+    for (int i = 0; i < 1234567; i++) {
         usleep(1); // simulate work
         tqdm_update(&bar, 1);
     }
 }
 ```
 
-This produces the following output:
-```
-Making progress on a very important task:  18% |██▍          | 11039892/60000000 [00:39<02:52, 284.45it/s]
-```
+This produces the following:
+![demo](demo.gif)
 
 For convenience, `tqdm` provides macros to simplify common, though admittedly contrived, patterns. The following example uses the `TQDM_FOR_BEGIN` and `TQDM_FOR_END` macros to achieve the same effect as above:
 
